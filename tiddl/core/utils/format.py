@@ -65,6 +65,29 @@ class UserFormat:
         return format_spec if self.value is True else ""
 
 
+class VolumeOptional:
+    """Returns the volume number if active (album has multiple volumes),
+    otherwise returns an empty string.
+
+    Active when the album has more than one volume (i.e. numberOfVolumes > 1).
+    When active, includes volume 1 as well as higher volumes.
+    """
+
+    def __init__(self, value: int, active: bool) -> None:
+        self.value = value
+        self.active = active
+
+    def __format__(self, format_spec: str) -> str:
+        if not self.active:
+            return ""
+        if format_spec:
+            return format(self.value, format_spec)
+        return str(self.value)
+
+    def __str__(self) -> str:
+        return str(self.value) if self.active else ""
+
+
 @dataclass(slots=True)
 class AlbumTemplate:
     id: int = 0
@@ -84,6 +107,7 @@ class ItemTemplate:
     title_version: str
     number: int
     volume: int
+    volume_optional: VolumeOptional
     version: str
     copyright: str
     bpm: int
@@ -137,12 +161,18 @@ def generate_template_data(
             isrc = ""
             dolby = UserFormat(False)
 
+        # volume_optional is active only when album has multiple volumes (> 1)
+        has_multiple_volumes = album is not None and album.numberOfVolumes > 1
+
         item_template = ItemTemplate(
             id=item.id,
             title=item.title,
             title_version=f"{item.title} ({version})" if version else item.title,
             number=item.trackNumber,
             volume=item.volumeNumber,
+            volume_optional=VolumeOptional(
+                item.volumeNumber, active=has_multiple_volumes
+            ),
             version=version,
             copyright=copyright_,
             bpm=bpm,
