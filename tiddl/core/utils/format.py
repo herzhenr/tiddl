@@ -1,9 +1,14 @@
 import re
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from tiddl.core.api.models import Track, Video, Album, Playlist
 from tiddl.core.utils.sanitize import sanitize_string
+
+# Maximum length for a single path segment (Windows max is 255 chars).
+# Kept well under to leave room for prefixes, extensions, and container paths.
+MAX_PATH_SEGMENT_LENGTH = 200
 
 
 def _clean_segment(text: str) -> str:
@@ -15,6 +20,7 @@ def _clean_segment(text: str) -> str:
     - Collapses multiple dots ("..", "...") into a single dot.
     - Removes trailing dots and spaces (Windows forbids them).
     - Collapses multiple spaces into one.
+    - Truncates to MAX_PATH_SEGMENT_LENGTH chars (with a warning).
     - Ensures the segment is never empty (uses "_" as fallback).
     """
 
@@ -23,6 +29,18 @@ def _clean_segment(text: str) -> str:
     text = text.rstrip(" .")
     text = re.sub(r"\s{2,}", " ", text)
     text = text.strip()
+
+    if len(text) > MAX_PATH_SEGMENT_LENGTH:
+        warnings.warn(
+            f"Segment too long ({len(text)} chars), truncating to "
+            f"{MAX_PATH_SEGMENT_LENGTH}:\n  {text[:120]}…"
+        )
+        # Try to cut at the last space before the limit
+        truncated = text[:MAX_PATH_SEGMENT_LENGTH]
+        last_space = truncated.rfind(" ")
+        if last_space > MAX_PATH_SEGMENT_LENGTH // 2:
+            truncated = truncated[:last_space]
+        text = truncated.strip()
 
     return text or "_"
 
@@ -88,6 +106,33 @@ class VolumeOptional:
         return str(self.value) if self.active else ""
 
 
+class NumberPadded:
+    """Track number with dynamic zero-padding based on total track count.
+
+    - total ≤ 10  → no padding  (1, 2, 3, …)
+    - total 11-99 → 2 digits    (01, 02, … 99)
+    - total ≥ 100 → 3 digits    (001, 002, …)
+
+    Falls back to plain str(value) when total is unknown (0).
+    """
+
+    def __init__(self, value: int, total: int = 0) -> None:
+        self.value = value
+        self.width = len(str(total)) if total > 0 else 0
+
+    def __format__(self, format_spec: str) -> str:
+        if format_spec:
+            return format(self.value, format_spec)
+        if self.width > 0:
+            return format(self.value, f"0{self.width}d")
+        return str(self.value)
+
+    def __str__(self) -> str:
+        if self.width > 0:
+            return format(self.value, f"0{self.width}d")
+        return str(self.value)
+
+
 @dataclass(slots=True)
 class AlbumTemplate:
     id: int = 0
@@ -106,6 +151,7 @@ class ItemTemplate:
     title: str
     title_version: str
     number: int
+    number_padded: NumberPadded
     volume: int
     volume_optional: VolumeOptional
     version: str
@@ -141,12 +187,12 @@ def generate_template_data(
 
     item_template = None
     if item:
-        main_artists = sorted(
-            [a.name for a in (item.artists or []) if a.type == "MAIN"]
-        )
-        featured_artists = sorted(
-            [a.name for a in (item.artists or []) if a.type == "FEATURED"]
-        )
+        main_artists = [
+            a.name for a in (item.artists or []) if a.type == "MAIN"
+        ]
+        featured_artists = [
+            a.name for a in (item.artists or []) if a.type == "FEATURED"
+        ]
 
         if isinstance(item, Track):
             version = item.version or ""
@@ -164,11 +210,15 @@ def generate_template_data(
         # volume_optional is active only when album has multiple volumes (> 1)
         has_multiple_volumes = album is not None and album.numberOfVolumes > 1
 
+        # number_padded pads with leading zeros based on total track count
+        total_tracks = album.numberOfTracks if album else 0
+
         item_template = ItemTemplate(
             id=item.id,
             title=item.title,
             title_version=f"{item.title} ({version})" if version else item.title,
             number=item.trackNumber,
+            number_padded=NumberPadded(item.trackNumber, total=total_tracks),
             volume=item.volumeNumber,
             volume_optional=VolumeOptional(
                 item.volumeNumber, active=has_multiple_volumes
@@ -179,9 +229,9 @@ def generate_template_data(
             isrc=isrc,
             quality=quality,
             artist=item.artist.name if item.artist else "",
-            artists="; ".join(main_artists),
-            features="; ".join(featured_artists),
-            artists_with_features="; ".join(main_artists + featured_artists),
+            artists=", ".join(main_artists),
+            features=", ".join(featured_artists),
+            artists_with_features=", ".join(main_artists + featured_artists),
             explicit=Explicit(getattr(item, "explicit", None)),
             dolby=dolby,
         )

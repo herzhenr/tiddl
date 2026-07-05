@@ -1,5 +1,11 @@
 # Tidal Downloader
 
+__Custom Changes__:
+
+- dont sort Artists alphabetically but keep them in the order they are listed on tidal
+- add custom placeholder `volume_optional` for optional volume so only if albums have more than one volume the volume numebr is added
+- add custom placeholder `number_padded` which only padds number when there are enough elements padding is necessary. For example a album with `5` elements still has `1 2 3 4 5`  buyt with `12` elements the number is `01, 02, 03 ...`
+
 Download tracks and videos from Tidal with max quality! `tiddl` is CLI app written in Python.
 
 > [!WARNING]
